@@ -1,0 +1,6 @@
+{
+  "name": "Tweedehands Advertentie Generator",
+  "description": "Genereer direct professionele tweedehands advertentieteksten en prijsindicaties op basis van Google Drive foto's en live marktonderzoek via Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
