@@ -12,197 +12,29 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Path to store the Google Refresh Token locally for single-user dev persistence
-const DB_FILE = path.join(process.cwd(), "db.json");
-
-// Helper to get stored refresh token
-function getStoredRefreshToken(): string | null {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const data = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-      return data.google_refresh_token || null;
-    }
-  } catch (error) {
-    console.error("Error reading db.json:", error);
-  }
-  return null;
-}
-
-// Helper to write refresh token
-function storeRefreshToken(token: string) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify({ google_refresh_token: token }, null, 2));
-  } catch (error) {
-    console.error("Error writing db.json:", error);
-  }
-}
-
-// Helper to delete refresh token (logout)
-function deleteRefreshToken() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      fs.unlinkSync(DB_FILE);
-    }
-  } catch (error) {
-    console.error("Error deleting db.json:", error);
-  }
-}
-
-// Google Client Config from environment variables
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.CLIENT_ID || "";
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || process.env.CLIENT_SECRET || "";
-const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
-const REDIRECT_URI = `${APP_URL}/api/auth/callback`;
-
-// Checks if real Google Auth is configured
-function isOAuthConfigured(): boolean {
-  return !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
-}
-
-// Retrieves valid access token
-async function getValidAccessToken(): Promise<string> {
-  const refreshToken = getStoredRefreshToken();
-  if (!refreshToken) {
-    throw new Error("Geen Google refresh token gevonden. Log eerst in.");
-  }
-
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
-
-  if (!response.ok) {
-    const errorDetails = await response.text();
-    throw new Error(`Google Access Token refresh mislukt: ${errorDetails}`);
-  }
-
-  const data = (await response.json()) as { access_token: string };
-  return data.access_token;
-}
+// No server-side refresh token storage needed. Client-side Firebase Auth provides the access token.
 
 // ==========================================
 // API ROUTES
-// ==============================================================
-// API ROUTES
 // ==========================================
 
-// Auth Configuration Status API
+// Auth Configuration Status API (Simplified since Firebase handles OAuth)
 app.get("/api/auth/config", (req, res) => {
   res.json({
-    configured: isOAuthConfigured(),
-    clientId: GOOGLE_CLIENT_ID ? `${GOOGLE_CLIENT_ID.substring(0, 8)}...` : null,
-    hasToken: !!getStoredRefreshToken(),
-    appUrl: APP_URL,
-    redirectUri: REDIRECT_URI,
+    configured: true,
   });
-});
-
-// Redirect to Google Consent Page
-app.get("/api/auth/login", (req, res) => {
-  if (!isOAuthConfigured()) {
-    return res.status(400).json({
-      error: "OAUTH_NOT_CONFIGURED",
-      message: "Google OAuth credentials zijn niet geconfigureerd in de .env file van de applicatie.",
-    });
-  }
-
-  const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    response_type: "code",
-    scope: "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
-    access_type: "offline",
-    prompt: "consent",
-  }).toString();
-
-  res.redirect(googleAuthUrl);
-});
-
-// Handle the OAuth Callback
-app.get(["/api/auth/callback", "/api/auth/callback/"], async (req, res) => {
-  const { code } = req.query;
-
-  if (!code) {
-    return res.status(400).send("Fout: Geen autorisatiecode ontvangen.");
-  }
-
-  try {
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        code: String(code),
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: REDIRECT_URI,
-        grant_type: "authorization_code",
-      }),
-    });
-
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      return res.status(500).send(`Token uitwisseling mislukt: ${errorText}`);
-    }
-
-    const tokenData = (await tokenResponse.json()) as { refresh_token?: string; access_token: string };
-
-    if (tokenData.refresh_token) {
-      storeRefreshToken(tokenData.refresh_token);
-    } else {
-      // Check if we already have one
-      if (!getStoredRefreshToken()) {
-        return res.status(400).send("Fout: Geen refresh_token ontvangen. Probeer opnieuw in te loggen met toestemming.");
-      }
-    }
-
-    // HTML response to communicate with the React parent window
-    res.send(`
-      <html>
-        <body>
-          <script>
-            if (window.opener) {
-              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
-              window.close();
-            } else {
-              window.location.href = '/';
-            }
-          </script>
-          <p>Authenticatie succesvol! Dit venster sluit automatisch...</p>
-        </body>
-      </html>
-    `);
-  } catch (error: any) {
-    res.status(500).send(`Authenticatie fout: ${error.message}`);
-  }
-});
-
-// Logout Route
-app.post("/api/auth/logout", (req, res) => {
-  deleteRefreshToken();
-  res.json({ success: true });
 });
 
 // Get folders inside 'tweedehands_afbeeldingen'
 app.get("/api/folders", async (req, res) => {
-  const hasToken = !!getStoredRefreshToken();
-
-  if (!isOAuthConfigured() || !hasToken) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.json({ mode: "real", authenticated: false, folders: [] });
   }
 
-  try {
-    const accessToken = await getValidAccessToken();
+  const accessToken = authHeader.split(" ")[1];
 
+  try {
     // 1. Search for 'tweedehands_afbeeldingen' folder
     const searchFolderRes = await fetch(
       "https://www.googleapis.com/drive/v3/files?" +
@@ -256,13 +88,14 @@ app.get("/api/folders", async (req, res) => {
 
 // Setup sample folder structure in user's Google Drive
 app.post("/api/setup-samples", async (req, res) => {
-  if (!isOAuthConfigured() || !getStoredRefreshToken()) {
-    return res.status(400).json({ error: "Niet ingelogd met Google Account." });
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Niet ingelogd met Google Account." });
   }
 
-  try {
-    const accessToken = await getValidAccessToken();
+  const accessToken = authHeader.split(" ")[1];
 
+  try {
     // 1. Create parent folder 'tweedehands_afbeeldingen'
     const createParentRes = await fetch("https://www.googleapis.com/drive/v3/files", {
       method: "POST",
@@ -367,9 +200,8 @@ app.post("/api/analyze", async (req, res) => {
     return res.status(400).json({ error: "folder_id is verplicht" });
   }
 
-  // Real Mode
-  const hasToken = !!getStoredRefreshToken();
-  if (!isOAuthConfigured() || !hasToken) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Niet ingelogd met Google Account" });
   }
 
@@ -382,7 +214,7 @@ app.post("/api/analyze", async (req, res) => {
   }
 
   try {
-    const accessToken = await getValidAccessToken();
+    const accessToken = authHeader.split(" ")[1];
 
     // 1. List files inside the selected subfolder
     const listFilesRes = await fetch(
@@ -536,7 +368,6 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Tweedehands Generator] Server gestart op http://localhost:${PORT}`);
-    console.log(`[Tweedehands Generator] Google OAuth Status: ${isOAuthConfigured() ? "Geconfigureerd" : "Niet geconfigureerd"}`);
   });
 }
 

@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { initAuth, googleSignIn, googleSignOut } from "./firebase";
+import { User } from "firebase/auth";
 import { 
   Camera, 
   FolderOpen, 
@@ -74,7 +76,8 @@ const SPINNER_TEXTS = [
 export default function App() {
   // Navigation & States
   const [screen, setScreen] = useState<1 | 2 | 3>(1);
-  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [authenticated, setAuthenticated] = useState(false);
   const [parentFolderNotFound, setParentFolderNotFound] = useState(false);
@@ -96,28 +99,40 @@ export default function App() {
   const [editedDescription, setEditedDescription] = useState("");
   const [copied, setCopied] = useState(false);
 
-  // Fetch initial configs and folders
+  // Initialize Firebase Auth state listener
   useEffect(() => {
-    fetchAuthConfig();
+    const unsubscribe = initAuth(
+      async (loggedInUser, accessToken) => {
+        setUser(loggedInUser);
+        setToken(accessToken);
+        setAuthenticated(true);
+        await fetchFolders(accessToken);
+      },
+      () => {
+        setUser(null);
+        setToken(null);
+        setAuthenticated(false);
+        setLoadingFolders(false);
+      }
+    );
+    return () => unsubscribe();
   }, []);
 
-  const fetchAuthConfig = async () => {
-    try {
-      const res = await fetch("/api/auth/config");
-      const data = await res.json();
-      setAuthConfig(data);
-      await fetchFolders();
-    } catch (err) {
-      console.error("Fout bij ophalen config:", err);
+  const fetchFolders = async (accessToken?: string) => {
+    const currentToken = accessToken || token;
+    if (!currentToken) {
+      setAuthenticated(false);
       setLoadingFolders(false);
+      return;
     }
-  };
-
-  const fetchFolders = async () => {
     setLoadingFolders(true);
     setParentFolderNotFound(false);
     try {
-      const res = await fetch("/api/folders");
+      const res = await fetch("/api/folders", {
+        headers: {
+          Authorization: `Bearer ${currentToken}`,
+        },
+      });
       const data = await res.json();
       setAuthenticated(!!data.authenticated);
       if (data.parentFolderNotFound) {
@@ -137,40 +152,30 @@ export default function App() {
   };
 
   // Google Sign-In redirect popup
-  const handleGoogleLogin = () => {
-    const width = 600;
-    const height = 700;
-    const left = window.screenX + (window.outerWidth - width) / 2;
-    const top = window.screenY + (window.outerHeight - height) / 2;
-
-    const popup = window.open(
-      "/api/auth/login",
-      "google_oauth_popup",
-      `width=${width},height=${height},left=${left},top=${top},status=no,resizable=yes`
-    );
-
-    if (!popup) {
-      // Direct redirect if popup blocked
-      window.location.href = "/api/auth/login";
+  const handleGoogleLogin = async () => {
+    setLoadingFolders(true);
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setUser(result.user);
+        setToken(result.accessToken);
+        setAuthenticated(true);
+        await fetchFolders(result.accessToken);
+      }
+    } catch (err) {
+      console.error("Inloggen mislukt:", err);
+      setLoadingFolders(false);
     }
   };
-
-  // Listen to message from OAuth Callback popup
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "OAUTH_AUTH_SUCCESS") {
-        fetchAuthConfig();
-      }
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, []);
 
   // Google Logout
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-      await fetchAuthConfig();
+      await googleSignOut();
+      setUser(null);
+      setToken(null);
+      setAuthenticated(false);
+      setFolders([]);
     } catch (err) {
       console.error("Logout mislukt:", err);
     }
@@ -180,7 +185,12 @@ export default function App() {
   const handleSetupSamples = async () => {
     setSetupLoading(true);
     try {
-      const res = await fetch("/api/setup-samples", { method: "POST" });
+      const res = await fetch("/api/setup-samples", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
       const data = await res.json();
       if (data.success) {
         setSetupSuccess(true);
@@ -197,7 +207,7 @@ export default function App() {
 
   // Start Gemini marktonderzoek & taxatie
   const handleAnalyze = async () => {
-    if (!selectedFolderId) return;
+    if (!selectedFolderId || !token) return;
 
     setScreen(2);
     setIsAnalyzing(true);
@@ -212,7 +222,10 @@ export default function App() {
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({ folder_id: selectedFolderId }),
       });
 
