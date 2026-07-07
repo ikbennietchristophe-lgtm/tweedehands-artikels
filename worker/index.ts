@@ -4,7 +4,7 @@
  */
 
 export interface Env {
-  AUTH_KV: KVNamespace;
+  AUTH_KV?: KVNamespace;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   REDIRECT_URI: string;
@@ -29,33 +29,37 @@ function handleOptions(request: Request) {
   });
 }
 
-// Retrieves a valid Google API Access Token using the stored Refresh Token
-async function getValidAccessToken(env: Env): Promise<string> {
-  const refreshToken = await env.AUTH_KV.get("google_refresh_token");
-  if (!refreshToken) {
-    throw new Error("No Google refresh token found. Please authenticate first.");
+// Retrieves a valid Google API Access Token using the stored Refresh Token or the Authorization header
+async function getValidAccessToken(env: Env, request: Request): Promise<string> {
+  const authHeader = request.headers.get("Authorization");
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
   }
 
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
+  if (env.AUTH_KV) {
+    const refreshToken = await env.AUTH_KV.get("google_refresh_token");
+    if (refreshToken) {
+      const response = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          client_id: env.GOOGLE_CLIENT_ID,
+          client_secret: env.GOOGLE_CLIENT_SECRET,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
+      });
 
-  if (!response.ok) {
-    const errorDetails = await response.text();
-    throw new Error(`Failed to refresh Google Access Token: ${errorDetails}`);
+      if (response.ok) {
+        const data = (await response.json()) as { access_token: string };
+        return data.access_token;
+      }
+    }
   }
 
-  const data = (await response.json()) as { access_token: string };
-  return data.access_token;
+  throw new Error("No Google access token provided in Authorization header, and no valid refresh token stored.");
 }
 
 export default {
@@ -124,12 +128,12 @@ export default {
 
         const tokenData = (await tokenResponse.json()) as { refresh_token?: string; access_token: string };
 
-        if (tokenData.refresh_token) {
+        if (tokenData.refresh_token && env.AUTH_KV) {
           // Store the refresh token securely in Cloudflare KV
           await env.AUTH_KV.put("google_refresh_token", tokenData.refresh_token);
-        } else {
+        } else if (!tokenData.refresh_token) {
           // If a refresh token wasn't returned, verify if we already have one stored
-          const existing = await env.AUTH_KV.get("google_refresh_token");
+          const existing = env.AUTH_KV ? await env.AUTH_KV.get("google_refresh_token") : null;
           if (!existing) {
             return new Response(
               JSON.stringify({
@@ -167,7 +171,7 @@ export default {
 
       // Check Authentication Status
       if (url.pathname === "/api/auth/status") {
-        const refreshToken = await env.AUTH_KV.get("google_refresh_token");
+        const refreshToken = env.AUTH_KV ? await env.AUTH_KV.get("google_refresh_token") : null;
         return new Response(JSON.stringify({ authenticated: !!refreshToken }), {
           status: 200,
           headers: { "Content-Type": "application/json", ...headers },
@@ -178,7 +182,7 @@ export default {
       if (url.pathname === "/api/folders") {
         let accessToken: string;
         try {
-          accessToken = await getValidAccessToken(env);
+          accessToken = await getValidAccessToken(env, request);
         } catch (e: any) {
           return new Response(JSON.stringify({ error: "unauthorized", details: e.message }), {
             status: 401,
@@ -265,7 +269,7 @@ export default {
 
         let accessToken: string;
         try {
-          accessToken = await getValidAccessToken(env);
+          accessToken = await getValidAccessToken(env, request);
         } catch (e: any) {
           return new Response(JSON.stringify({ error: "unauthorized", details: e.message }), {
             status: 401,

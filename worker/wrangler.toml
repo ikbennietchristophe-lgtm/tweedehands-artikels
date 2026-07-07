@@ -12,6 +12,3 @@ compatibility_date = "2024-03-01"
 # REDIRECT_URI = "https://your-worker.your-subdomain.workers.dev/api/auth/callback"
 # GEMINI_API_KEY = "your-gemini-api-key"
 
-[[kv_namespaces]]
-binding = "AUTH_KV"
-id = "your_kv_namespace_id_here"
