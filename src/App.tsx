@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { initAuth, googleSignIn, googleSignOut } from "./firebase";
+/*
 import { User } from "firebase/auth";
+*/
 import { 
   Camera, 
   FolderOpen, 
@@ -76,8 +78,8 @@ const SPINNER_TEXTS = [
 export default function App() {
   // Navigation & States
   const [screen, setScreen] = useState<1 | 2 | 3>(1);
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  //const [user, setUser] = useState<User | null>(null);
+  c<//onst [token, setToken] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [authenticated, setAuthenticated] = useState(false);
   const [parentFolderNotFound, setParentFolderNotFound] = useState(false);
@@ -100,6 +102,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
 
   // Initialize Firebase Auth state listener
+  /*
   useEffect(() => {
     const unsubscribe = initAuth(
       async (loggedInUser, accessToken) => {
@@ -117,7 +120,24 @@ export default function App() {
     );
     return () => unsubscribe();
   }, []);
+  */
 
+  useEffect(() => {
+  const unsubscribe = initAuth(
+    async () => {
+      setAuthenticated(true);
+      await fetchFolders();
+    },
+    () => {
+      setAuthenticated(false);
+      setLoadingFolders(false);
+    }
+  );
+  return () => unsubscribe();
+}, []);
+
+ 
+  /*
   const fetchFolders = async (accessToken?: string) => {
     const currentToken = accessToken || token;
     if (!currentToken) {
@@ -151,7 +171,28 @@ export default function App() {
     }
   };
 
+  */
+
+const fetchFolders = async () => {
+  setLoadingFolders(true);
+  setParentFolderNotFound(false);
+  try {
+    const res = await fetch("/api/folders");
+    if (res.status === 401) {
+      setAuthenticated(false);
+      setLoadingFolders(false);
+      return;
+    }
+    const data = await res.json();
+
+
+
+
+
+  
+
   // Google Sign-In redirect popup
+    /*
   const handleGoogleLogin = async () => {
     setLoadingFolders(true);
     try {
@@ -167,8 +208,26 @@ export default function App() {
       setLoadingFolders(false);
     }
   };
+  */
+const handleGoogleLogin = async () => {
+  setLoadingFolders(true);
+  try {
+    const success = await googleSignIn();
+    if (success) {
+      setAuthenticated(true);
+      await fetchFolders();
+    } else {
+      setLoadingFolders(false);
+    }
+  } catch (err) {
+    console.error("Inloggen mislukt:", err);
+    setLoadingFolders(false);
+  }
+};
+
 
   // Google Logout
+    /*
   const handleLogout = async () => {
     try {
       await googleSignOut();
@@ -180,16 +239,35 @@ export default function App() {
       console.error("Logout mislukt:", err);
     }
   };
+  */
+
+    const handleLogout = async () => {
+  try {
+    await googleSignOut();
+    setAuthenticated(false);
+    setFolders([]);
+  } catch (err) {
+    console.error("Logout mislukt:", err);
+  }
+};
 
   // Setup mock/sample folders in real drive
   const handleSetupSamples = async () => {
     setSetupLoading(true);
     try {
+      /*
       const res = await fetch("/api/setup-samples", {
         method: "POST",
+        
         headers: {
           "Authorization": `Bearer ${token}`
         }
+      */
+
+const res = await fetch("/api/setup-samples", {
+  method: "POST"
+});
+      
       });
       const data = await res.json();
       if (data.success) {
@@ -224,7 +302,7 @@ export default function App() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
+         /* "Authorization": `Bearer ${token}`*/
         },
         body: JSON.stringify({ folder_id: selectedFolderId }),
       });
