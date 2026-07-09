@@ -79,7 +79,7 @@ export default function App() {
   // Navigation & States
   const [screen, setScreen] = useState<1 | 2 | 3>(1);
   //const [user, setUser] = useState<User | null>(null);
-  c<//onst [token, setToken] = useState<string | null>(null);
+  //const [token, setToken] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [authenticated, setAuthenticated] = useState(false);
   const [parentFolderNotFound, setParentFolderNotFound] = useState(false);
