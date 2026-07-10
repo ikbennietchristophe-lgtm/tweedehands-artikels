@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { initAuth, googleSignIn, googleSignOut } from "./firebase";
+import { User } from "firebase/auth";
 import { 
   Camera, 
   FolderOpen, 
@@ -13,7 +14,9 @@ import {
   CheckCircle2,
   Info,
   ExternalLink,
+  ChevronRight,
   ArrowLeft,
+  Search,
   Euro
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -50,6 +53,14 @@ interface Folder {
   name: string;
 }
 
+interface AuthConfig {
+  configured: boolean;
+  clientId: string | null;
+  hasToken: boolean;
+  appUrl: string;
+  redirectUri: string;
+}
+
 const SPINNER_TEXTS = [
   "Afbeeldingen downloaden uit Google Drive...",
   "Foto's omzetten naar high-definition scans...",
@@ -65,7 +76,8 @@ const SPINNER_TEXTS = [
 export default function App() {
   // Navigation & States
   const [screen, setScreen] = useState<1 | 2 | 3>(1);
-  // user en token niet meer nodig — de Worker beheert authenticatie server-side via KV
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [authenticated, setAuthenticated] = useState(false);
   const [parentFolderNotFound, setParentFolderNotFound] = useState(false);
@@ -87,14 +99,18 @@ export default function App() {
   const [editedDescription, setEditedDescription] = useState("");
   const [copied, setCopied] = useState(false);
 
-  // Initialize auth state check (via Worker /api/auth/status)
+  // Initialize Firebase Auth state listener
   useEffect(() => {
     const unsubscribe = initAuth(
-      async () => {
+      async (loggedInUser, accessToken) => {
+        setUser(loggedInUser);
+        setToken(accessToken);
         setAuthenticated(true);
-        await fetchFolders();
+        await fetchFolders(accessToken);
       },
       () => {
+        setUser(null);
+        setToken(null);
         setAuthenticated(false);
         setLoadingFolders(false);
       }
@@ -102,18 +118,24 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const fetchFolders = async () => {
+  const fetchFolders = async (accessToken?: string) => {
+    const currentToken = accessToken || token;
+    if (!currentToken) {
+      setAuthenticated(false);
+      setLoadingFolders(false);
+      return;
+    }
     setLoadingFolders(true);
     setParentFolderNotFound(false);
     try {
-      const res = await fetch("/api/folders");
-      if (res.status === 401) {
-        setAuthenticated(false);
-        setLoadingFolders(false);
-        return;
-      }
+      const res = await fetch("/api/folders", {
+        headers: {
+          Authorization: `Bearer ${currentToken}`,
+        },
+      });
       const data = await res.json();
-      if (data.parentFolderNotFound || data.error === "parent_folder_not_found") {
+      setAuthenticated(!!data.authenticated);
+      if (data.parentFolderNotFound) {
         setParentFolderNotFound(true);
         setFolders([]);
       } else {
@@ -129,16 +151,16 @@ export default function App() {
     }
   };
 
-  // Google Sign-In via Worker popup flow
+  // Google Sign-In redirect popup
   const handleGoogleLogin = async () => {
     setLoadingFolders(true);
     try {
-      const success = await googleSignIn();
-      if (success) {
+      const result = await googleSignIn();
+      if (result) {
+        setUser(result.user);
+        setToken(result.accessToken);
         setAuthenticated(true);
-        await fetchFolders();
-      } else {
-        setLoadingFolders(false);
+        await fetchFolders(result.accessToken);
       }
     } catch (err) {
       console.error("Inloggen mislukt:", err);
@@ -150,6 +172,8 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await googleSignOut();
+      setUser(null);
+      setToken(null);
       setAuthenticated(false);
       setFolders([]);
     } catch (err) {
@@ -162,7 +186,10 @@ export default function App() {
     setSetupLoading(true);
     try {
       const res = await fetch("/api/setup-samples", {
-        method: "POST"
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
       });
       const data = await res.json();
       if (data.success) {
@@ -180,7 +207,7 @@ export default function App() {
 
   // Start Gemini marktonderzoek & taxatie
   const handleAnalyze = async () => {
-    if (!selectedFolderId) return;
+    if (!selectedFolderId || !token) return;
 
     setScreen(2);
     setIsAnalyzing(true);
@@ -196,7 +223,8 @@ export default function App() {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({ folder_id: selectedFolderId }),
       });
@@ -416,7 +444,7 @@ export default function App() {
                           Maak een nieuwe map aan in Drive (bijv. &apos;Vintage Fiets&apos;) en upload hier je foto&apos;s naartoe.
                         </p>
                         <button
-                          onClick={() => fetchFolders()}
+                          onClick={fetchFolders}
                           className="mt-3 text-emerald-600 hover:text-emerald-700 text-xs font-bold inline-flex items-center gap-1"
                         >
                           <RefreshCw className="w-3 h-3" /> Vernieuwen
@@ -626,7 +654,7 @@ export default function App() {
                           Bodemlimiet
                         </span>
                         <span className="block text-sm font-extrabold text-rose-700 mt-1">
-                          € {analysisResult.prijs_analyse.minimaal_acceptabele_prijs}
+                          € {analysisResult.prijs_analyse.minimaal_acceptabele_prijs || analysisResult.prijs_analyse.minimaal_acceptabele_price}
                         </span>
                       </div>
                     </div>

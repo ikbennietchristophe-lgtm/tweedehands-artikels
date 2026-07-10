@@ -1,13 +1,12 @@
 /**
  * Cloudflare Worker Backend for Second-Hand Ad & Pricing Generator
- * Handles Google OAuth2, Google Drive integration, and Gemini 2.5 Flash API with Google Search Tool.
+ * Handles Google Drive integration and Gemini 2.5 Flash API with Google Search Tool.
  */
 
 export interface Env {
-  AUTH_KV?: KVNamespace;
-  GOOGLE_CLIENT_ID: string;
-  GOOGLE_CLIENT_SECRET: string;
-  REDIRECT_URI: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  REDIRECT_URI?: string;
   GEMINI_API_KEY: string;
 }
 
@@ -29,37 +28,13 @@ function handleOptions(request: Request) {
   });
 }
 
-// Retrieves a valid Google API Access Token using the stored Refresh Token or the Authorization header
-async function getValidAccessToken(env: Env, request: Request): Promise<string> {
+// Retrieves a valid Google API Access Token from the Authorization header
+function getValidAccessToken(request: Request): string {
   const authHeader = request.headers.get("Authorization");
   if (authHeader && authHeader.startsWith("Bearer ")) {
     return authHeader.split(" ")[1];
   }
-
-  if (env.AUTH_KV) {
-    const refreshToken = await env.AUTH_KV.get("google_refresh_token");
-    if (refreshToken) {
-      const response = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          client_id: env.GOOGLE_CLIENT_ID,
-          client_secret: env.GOOGLE_CLIENT_SECRET,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-        }),
-      });
-
-      if (response.ok) {
-        const data = (await response.json()) as { access_token: string };
-        return data.access_token;
-      }
-    }
-  }
-
-  throw new Error("No Google access token provided in Authorization header, and no valid refresh token stored.");
+  throw new Error("Geen Google access token meegegeven in de Authorization header.");
 }
 
 export default {
@@ -74,118 +49,22 @@ export default {
     const headers = corsHeaders(request);
 
     try {
-      // 1. Google OAuth2 Login Redirect Endpoint
-      if (url.pathname === "/api/auth/login") {
-        const googleAuthUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-        googleAuthUrl.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
-        googleAuthUrl.searchParams.set("redirect_uri", env.REDIRECT_URI);
-        googleAuthUrl.searchParams.set("response_type", "code");
-        googleAuthUrl.searchParams.set("scope", "https://www.googleapis.com/auth/drive.readonly");
-        googleAuthUrl.searchParams.set("access_type", "offline");
-        googleAuthUrl.searchParams.set("prompt", "consent");
-
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: googleAuthUrl.toString(),
-            ...headers,
-          },
-        });
-      }
-
-      // 2. Google OAuth2 Callback Endpoint
-      if (url.pathname === "/api/auth/callback" || url.pathname === "/api/auth/callback/") {
-        const code = url.searchParams.get("code");
-        if (!code) {
-          return new Response(JSON.stringify({ error: "Missing authorization code" }), {
-            status: 400,
-            headers: { "Content-Type": "application/json", ...headers },
-          });
-        }
-
-        // Exchange Authorization Code for Tokens
-        const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({
-            code,
-            client_id: env.GOOGLE_CLIENT_ID,
-            client_secret: env.GOOGLE_CLIENT_SECRET,
-            redirect_uri: env.REDIRECT_URI,
-            grant_type: "authorization_code",
-          }),
-        });
-
-        if (!tokenResponse.ok) {
-          const errorText = await tokenResponse.text();
-          return new Response(JSON.stringify({ error: "Token exchange failed", details: errorText }), {
-            status: 500,
-            headers: { "Content-Type": "application/json", ...headers },
-          });
-        }
-
-        const tokenData = (await tokenResponse.json()) as { refresh_token?: string; access_token: string };
-
-        if (tokenData.refresh_token && env.AUTH_KV) {
-          // Store the refresh token securely in Cloudflare KV
-          await env.AUTH_KV.put("google_refresh_token", tokenData.refresh_token);
-        } else if (!tokenData.refresh_token) {
-          // If a refresh token wasn't returned, verify if we already have one stored
-          const existing = env.AUTH_KV ? await env.AUTH_KV.get("google_refresh_token") : null;
-          if (!existing) {
-            return new Response(
-              JSON.stringify({
-                error: "No refresh token received. Re-authenticate with prompt=consent.",
-              }),
-              {
-                status: 400,
-                headers: { "Content-Type": "application/json", ...headers },
-              }
-            );
-          }
-        }
-
-        // Redirect back to the frontend homepage
-        const frontendUrl = new URL(env.REDIRECT_URI).origin;
-        return new Response(
-          `<html>
-            <body>
-              <script>
-                if (window.opener) {
-                  window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
-                  window.close();
-                } else {
-                  window.location.href = '${frontendUrl}/';
-                }
-              </script>
-              <p>Authenticatie succesvol! Dit venster sluit automatisch...</p>
-            </body>
-          </html>`,
-          {
-            headers: { "Content-Type": "text/html", ...headers },
-          }
-        );
-      }
-
-      // Check Authentication Status
-      if (url.pathname === "/api/auth/status") {
-        const refreshToken = env.AUTH_KV ? await env.AUTH_KV.get("google_refresh_token") : null;
-        return new Response(JSON.stringify({ authenticated: !!refreshToken }), {
+      // 1. Auth config endpoint (tells frontend we are configured)
+      if (url.pathname === "/api/auth/config") {
+        return new Response(JSON.stringify({ configured: true }), {
           status: 200,
           headers: { "Content-Type": "application/json", ...headers },
         });
       }
 
-      // 3. GET /api/folders Endpoint
-      if (url.pathname === "/api/folders") {
+      // 2. GET /api/folders Endpoint
+      if (url.pathname === "/api/folders" || url.pathname === "/api/folders/") {
         let accessToken: string;
         try {
-          accessToken = await getValidAccessToken(env, request);
+          accessToken = getValidAccessToken(request);
         } catch (e: any) {
-          return new Response(JSON.stringify({ error: "unauthorized", details: e.message }), {
-            status: 401,
+          return new Response(JSON.stringify({ mode: "real", authenticated: false, folders: [], error: e.message }), {
+            status: 200, // keep 200 so frontend parses gracefully
             headers: { "Content-Type": "application/json", ...headers },
           });
         }
@@ -215,8 +94,8 @@ export default {
         const searchFolderData = (await searchFolderRes.json()) as { files: Array<{ id: string; name: string }> };
 
         if (!searchFolderData.files || searchFolderData.files.length === 0) {
-          // If the folder doesn't exist, return empty list or specific error to prompt setup
-          return new Response(JSON.stringify({ error: "parent_folder_not_found", folders: [] }), {
+          // If the folder doesn't exist, return parentFolderNotFound: true to prompt setup
+          return new Response(JSON.stringify({ mode: "real", authenticated: true, parentFolderNotFound: true, folders: [] }), {
             status: 200,
             headers: { "Content-Type": "application/json", ...headers },
           });
@@ -249,7 +128,119 @@ export default {
 
         const subfoldersData = (await listSubfoldersRes.json()) as { files: Array<{ id: string; name: string }> };
 
-        return new Response(JSON.stringify({ folders: subfoldersData.files || [] }), {
+        return new Response(JSON.stringify({ mode: "real", authenticated: true, folders: subfoldersData.files || [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...headers },
+        });
+      }
+
+      // 3. POST /api/setup-samples Endpoint
+      if (url.pathname === "/api/setup-samples" && request.method === "POST") {
+        let accessToken: string;
+        try {
+          accessToken = getValidAccessToken(request);
+        } catch (e: any) {
+          return new Response(JSON.stringify({ error: "unauthorized", details: e.message }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...headers },
+          });
+        }
+
+        // Create parent folder 'tweedehands_afbeeldingen'
+        const createParentRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "tweedehands_afbeeldingen",
+            mimeType: "application/vnd.google-apps.folder",
+          }),
+        });
+
+        if (!createParentRes.ok) {
+          const errText = await createParentRes.text();
+          return new Response(JSON.stringify({ error: "Failed creating parent folder", details: errText }), {
+            status: 500,
+            headers: { "Content-Type": "application/json", ...headers },
+          });
+        }
+
+        const parentFolder = (await createParentRes.json()) as { id: string };
+
+        // Create subfolder 'Vintage Analoge Camera'
+        const createSubRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "Vintage Analoge Camera",
+            mimeType: "application/vnd.google-apps.folder",
+            parents: [parentFolder.id],
+          }),
+        });
+
+        if (!createSubRes.ok) {
+          const errText = await createSubRes.text();
+          return new Response(JSON.stringify({ error: "Failed creating subfolder", details: errText }), {
+            status: 500,
+            headers: { "Content-Type": "application/json", ...headers },
+          });
+        }
+
+        const subFolder = (await createSubRes.json()) as { id: string };
+
+        // Download a public image and upload it to the subfolder
+        const imageUrl = "https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=600&q=80";
+        const imgFetch = await fetch(imageUrl);
+        if (imgFetch.ok) {
+          const imgBuffer = await imgFetch.arrayBuffer();
+
+          const metadata = {
+            name: "vintage_camera.jpg",
+            parents: [subFolder.id],
+            mimeType: "image/jpeg",
+          };
+
+          const boundary = "-------314159265358979323846";
+          const delimiter = `\r\n--${boundary}\r\n`;
+          const closeDelim = `\r\n--${boundary}--`;
+
+          const header =
+            delimiter +
+            'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+            JSON.stringify(metadata) +
+            delimiter +
+            'Content-Type: image/jpeg\r\nContent-Transfer-Encoding: base64\r\n\r\n';
+
+          // Convert arrayBuffer to Base64 in standard JS
+          const uint8Array = new Uint8Array(imgBuffer);
+          let binaryString = "";
+          for (let i = 0; i < uint8Array.length; i++) {
+            binaryString += String.fromCharCode(uint8Array[i]);
+          }
+          const base64Data = btoa(binaryString);
+
+          const bodyMultipart = header + base64Data + closeDelim;
+
+          const uploadRes = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": `multipart/related; boundary=${boundary}`,
+            },
+            body: bodyMultipart,
+          });
+
+          if (!uploadRes.ok) {
+            console.error("Failed uploading sample image to Drive:", await uploadRes.text());
+          }
+        }
+
+        return new Response(JSON.stringify({ success: true }), {
           status: 200,
           headers: { "Content-Type": "application/json", ...headers },
         });
@@ -269,12 +260,26 @@ export default {
 
         let accessToken: string;
         try {
-          accessToken = await getValidAccessToken(env, request);
+          accessToken = getValidAccessToken(request);
         } catch (e: any) {
           return new Response(JSON.stringify({ error: "unauthorized", details: e.message }), {
             status: 401,
             headers: { "Content-Type": "application/json", ...headers },
           });
+        }
+
+        const geminiApiKey = env.GEMINI_API_KEY;
+        if (!geminiApiKey) {
+          return new Response(
+            JSON.stringify({
+              error: "GEMINI_API_KEY_MISSING",
+              message: "De Gemini API Key is niet geconfigureerd in de Cloudflare Worker.",
+            }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json", ...headers },
+            }
+          );
         }
 
         // List files in the selected subfolder
@@ -331,7 +336,6 @@ export default {
             }
 
             const arrayBuffer = await mediaRes.arrayBuffer();
-            // Convert ArrayBuffer to Base64
             const uint8Array = new Uint8Array(arrayBuffer);
             let binaryString = "";
             for (let i = 0; i < uint8Array.length; i++) {
@@ -348,9 +352,9 @@ export default {
           })
         );
 
-        // Call Gemini 2.5 Flash API with Search Grounding Tool
+        // Call Gemini 2.5 Flash API with Search Grounding Tool and Schema
         const systemPrompt =
-          "Je bent een expert in e-commerce en producttaxatie voor de Nederlandse en Belgische tweedehandsmarkt (Marktplaats, 2dehands.be, Vinted, Facebook Marketplace). Gegeven de bijgevoegde afbeelding(en) van één specifiek product, voer een live marktonderzoek uit met je Google Search tool. Zoek naar actuele advertenties en recente verkopen van dit specifieke merk en model op Marktplaats.nl en 2dehands.be. Genereer een antwoord dat STRICT voldoet aan het volgende JSON-formaat: { 'product_identificatie': { 'merk': 'string', 'model': 'string', 'geschatte_staat': 'string' }, 'prijs_analyse': { 'marktprijs_min': number, 'marktprijs_max': number, 'aanbevolen_vraagprijs': number, 'minimaal_acceptabele_prijs': number, 'toelichting_prijs': 'string' }, 'advertentie': { 'titel': 'string', 'beschrijving': 'string', 'tags': ['string'] } }";
+          "Je bent een expert in e-commerce en producttaxatie voor de Nederlandse en Belgische tweedehandsmarkt (Marktplaats, 2dehands.be, Vinted, Facebook Marketplace). Gegeven de bijgevoegde afbeelding(en) van één specifiek product, voer een live marktonderzoek uit met je Google Search tool. Zoek naar actuele advertenties en recente verkopen van dit specifieke merk en model op Marktplaats.nl en 2dehands.be. Genereer een antwoord dat STRICT voldoet aan de opgevraagde JSON-schema.";
 
         const geminiPayload = {
           contents: [
@@ -365,12 +369,56 @@ export default {
           ],
           generationConfig: {
             responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                product_identificatie: {
+                  type: "OBJECT",
+                  properties: {
+                    merk: { type: "STRING" },
+                    model: { type: "STRING" },
+                    geschatte_staat: { type: "STRING" },
+                  },
+                  required: ["merk", "model", "geschatte_staat"],
+                },
+                prijs_analyse: {
+                  type: "OBJECT",
+                  properties: {
+                    marktprijs_min: { type: "NUMBER" },
+                    marktprijs_max: { type: "NUMBER" },
+                    aanbevolen_vraagprijs: { type: "NUMBER" },
+                    minimaal_acceptabele_prijs: { type: "NUMBER" },
+                    toelichting_prijs: { type: "STRING" },
+                  },
+                  required: [
+                    "marktprijs_min",
+                    "marktprijs_max",
+                    "aanbevolen_vraagprijs",
+                    "minimaal_acceptabele_prijs",
+                    "toelichting_prijs",
+                  ],
+                },
+                advertentie: {
+                  type: "OBJECT",
+                  properties: {
+                    titel: { type: "STRING" },
+                    beschrijving: { type: "STRING" },
+                    tags: {
+                      type: "ARRAY",
+                      items: { type: "STRING" },
+                    },
+                  },
+                  required: ["titel", "beschrijving", "tags"],
+                },
+              },
+              required: ["product_identificatie", "prijs_analyse", "advertentie"],
+            },
           },
           tools: [{ googleSearch: {} }],
         };
 
         const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
           {
             method: "POST",
             headers: {
@@ -398,7 +446,6 @@ export default {
           });
         }
 
-        // Return the parsed JSON directly
         return new Response(textResponse, {
           status: 200,
           headers: { "Content-Type": "application/json", ...headers },
