@@ -1,12 +1,9 @@
-
-
 {
-  "apiKey": "AIzaSyAldPKJjXWwosERpKG7y07fYTcBGOS_k0g",
-  "authDomain": "tweedehands-artikels.firebaseapp.com",
-  "projectId": "tweedehands-artikels",
-  "storageBucket": "tweedehands-artikels.firebasestorage.app",
-  "messagingSenderId": "736231246138",
-  "appId": "1:736231246138:web:7ee466da3bea2ff266e803",
-  "measurementId": "G-KWL706ED4J"
-  
+  "projectId": "folkloric-glass-kgtt6",
+  "appId": "1:147379408250:web:559b69bfc9b489e8731ac3",
+  "apiKey": "AIzaSyCvfoZ7nZFQrj8mpE96EjKiwtcAMJeV50k",
+  "authDomain": "folkloric-glass-kgtt6.firebaseapp.com",
+  "storageBucket": "folkloric-glass-kgtt6.firebasestorage.app",
+  "messagingSenderId": "147379408250",
+  "measurementId": ""
 }
