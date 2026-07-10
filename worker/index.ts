@@ -7,7 +7,8 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   REDIRECT_URI?: string;
-  GEMINI_API_KEY: string;
+  //GEMINI_API_KEY: string;
+  GEMINI_API_KEY: { get(): Promise<string> };
 }
 
 // CORS helper to add response headers
@@ -268,7 +269,8 @@ export default {
           });
         }
 
-        const geminiApiKey = env.GEMINI_API_KEY;
+       // const geminiApiKey = env.GEMINI_API_KEY;
+        const geminiApiKey = await env.GEMINI_API_KEY.get();
         if (!geminiApiKey) {
           return new Response(
             JSON.stringify({
@@ -283,6 +285,7 @@ export default {
         }
 
         // TIJDELIJKE DEBUG — verwijder dit blok na het testen!
+        /*
         return new Response(
           JSON.stringify({
             debug_key_start: geminiApiKey.substring(0, 8),
@@ -291,7 +294,7 @@ export default {
           }),
           { status: 200, headers: { "Content-Type": "application/json", ...headers } }
         );
-
+*/
         // List files in the selected subfolder
         const listFilesRes = await fetch(
           "https://www.googleapis.com/drive/v3/files?" +
