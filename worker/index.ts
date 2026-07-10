@@ -417,6 +417,36 @@ export default {
           tools: [{ googleSearch: {} }],
         };
 
+        
+        /* -----------------------------------------------------------------------------------------------------------  */
+        const geminiApiKey = env.GEMINI_API_KEY;
+if (!geminiApiKey) {
+  return new Response(
+    JSON.stringify({
+      error: "GEMINI_API_KEY_MISSING",
+      message: "De Gemini API Key is niet geconfigureerd in de Cloudflare Worker.",
+    }),
+    {
+      status: 500,
+      headers: { "Content-Type": "application/json", ...headers },
+    }
+  );
+}
+
+// TIJDELIJKE DEBUG — verwijder dit na het testen!
+return new Response(
+  JSON.stringify({
+    debug_key_start: geminiApiKey.substring(0, 8),
+    debug_key_end: geminiApiKey.substring(geminiApiKey.length - 6),
+    debug_key_length: geminiApiKey.length,
+  }),
+  { status: 200, headers: { "Content-Type": "application/json", ...headers } }
+);
+
+               /* -----------------------------------------------------------------------------------------------------------  */
+
+
+        
         const geminiRes = await fetch(
           //`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
