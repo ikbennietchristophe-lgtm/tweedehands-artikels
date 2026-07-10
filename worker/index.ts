@@ -7,8 +7,8 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   REDIRECT_URI?: string;
-  //GEMINI_API_KEY: string;
-  GEMINI_API_KEY: { get(): Promise<string> };
+  GEMINI_API_KEY: string;
+};
 }
 
 // CORS helper to add response headers
@@ -269,8 +269,8 @@ export default {
           });
         }
 
-       // const geminiApiKey = env.GEMINI_API_KEY;
-        const geminiApiKey = await env.GEMINI_API_KEY.get();
+        const geminiApiKey = env.GEMINI_API_KEY;
+       // const geminiApiKey = await env.GEMINI_API_KEY.get();
         if (!geminiApiKey) {
           return new Response(
             JSON.stringify({
