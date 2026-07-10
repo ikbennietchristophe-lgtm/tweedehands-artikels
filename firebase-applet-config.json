@@ -1,9 +1,9 @@
 {
+  "projectId": "tweedehands-artikels",
+  "appId": "1:736231246138:web:7ee466da3bea2ff266e803",
   "apiKey": "AIzaSyAldPKJjXWwosERpKG7y07fYTcBGOS_k0g",
   "authDomain": "tweedehands-artikels.firebaseapp.com",
-  "projectId": "tweedehands-artikels",
   "storageBucket": "tweedehands-artikels.firebasestorage.app",
   "messagingSenderId": "736231246138",
-  "appId": "1:736231246138:web:7ee466da3bea2ff266e803",
   "measurementId": "G-KWL706ED4J"
 }
