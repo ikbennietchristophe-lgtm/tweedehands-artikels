@@ -8,7 +8,6 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   REDIRECT_URI?: string;
   GEMINI_API_KEY: string;
-};
 }
 
 // CORS helper to add response headers
