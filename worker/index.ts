@@ -10,6 +10,7 @@ export interface Env {
   GEMINI_API_KEY: string;
 }
 
+
 // CORS helper to add response headers
 function corsHeaders(request: Request) {
   const origin = request.headers.get("Origin") || "*";
