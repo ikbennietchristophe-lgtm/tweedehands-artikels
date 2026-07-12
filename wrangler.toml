@@ -1,11 +1,12 @@
 # wrangler.toml
 # Cloudflare Worker configuration for Tweedehands Artikels
-
 name = "tweedehands-artikels"
 main = "worker/index.ts"
 compatibility_date = "2024-03-01"
-
 [assets]
 directory = "./dist"
 
-
+[[secrets_store_secrets]]
+binding = "GEMINI_API_KEY"
+store_id = "421ae69bd60845359aa1bb8a33b8c22b"
+secret_name = "GEMINI_API_KEY"
